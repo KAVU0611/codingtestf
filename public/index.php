@@ -106,6 +106,17 @@ if (isset($_GET['created'])) {
     );
 }
 
+if (isset($_GET['imported_playlist'])) {
+    $rootMessages['success'][] = sprintf(
+        'Imported playlist "%s" from uploaded folder.',
+        (string)$_GET['imported_playlist']
+    );
+}
+
+if (isset($_GET['import_error'])) {
+    $rootMessages['errors'][] = (string)$_GET['import_error'];
+}
+
 $filters = [
     'album' => trim((string)($_GET['filter_album'] ?? '')),
     'artist' => trim((string)($_GET['filter_artist'] ?? '')),
@@ -447,6 +458,14 @@ function formatSeconds(int $seconds): string
             border: 1px solid #bbf7d0;
             color: #166534;
         }
+        .message.info {
+            background: #dbeafe;
+            border: 1px solid #bfdbfe;
+            color: #1e3a8a;
+        }
+        .message.is-hidden {
+            display: none;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -550,6 +569,7 @@ function formatSeconds(int $seconds): string
             <p id="folder-preview-summary"></p>
             <ul id="folder-preview-list"></ul>
         </div>
+        <div id="folder-import-status" class="message info is-hidden"></div>
         <p class="playlist-context">
             Currently reading from: <code><?= htmlspecialchars($playlistRoot, ENT_QUOTES, 'UTF-8') ?></code>
         </p>
@@ -676,6 +696,8 @@ function formatSeconds(int $seconds): string
     var preview = document.getElementById('folder-preview');
     var previewSummary = document.getElementById('folder-preview-summary');
     var previewList = document.getElementById('folder-preview-list');
+    var importStatus = document.getElementById('folder-import-status');
+    var isImporting = false;
 
     if (!folderButton || !folderInput || !preview || !previewSummary || !previewList) {
         return;
@@ -689,6 +711,7 @@ function formatSeconds(int $seconds): string
     folderInput.addEventListener('change', function () {
         var files = Array.prototype.slice.call(folderInput.files || []);
         previewList.innerHTML = '';
+        clearImportStatus();
 
         if (files.length === 0) {
             preview.classList.add('is-hidden');
@@ -722,7 +745,9 @@ function formatSeconds(int $seconds): string
         previewSummary.textContent = summary.join(' • ');
         preview.classList.remove('is-hidden');
 
-        autoApplyPlaylistRoot(files);
+        importPlaylistFolder(files).catch(function (error) {
+            setImportStatus('error', error && error.message ? error.message : 'Failed to import playlist.');
+        });
     });
 
     function extractRootFolder(file) {
@@ -756,74 +781,126 @@ function formatSeconds(int $seconds): string
         return number.toFixed(precision) + ' ' + units[exponent];
     }
 
-    function autoApplyPlaylistRoot(files) {
-        var form = document.getElementById('playlist-root-form');
-        var input = document.getElementById('playlist_root');
-        if (!form || !input || !Array.isArray(files) || files.length === 0) {
+    function setImportStatus(type, message) {
+        if (!importStatus) {
             return;
         }
 
-        var detectedPath = detectAbsoluteFolderPath(files);
-        if (typeof detectedPath === 'string' && detectedPath.trim() !== '') {
-            var normalized = detectedPath.replace(/[\\/]+$/, '');
-            if (normalized !== '') {
-                input.value = normalized;
-                input.dataset.autofilled = 'true';
-            }
+        var className = 'info';
+        if (type === 'success') {
+            className = 'success';
+        } else if (type === 'error') {
+            className = 'error';
         }
 
-        if (input.value.trim() === '') {
-            return;
-        }
-
-        requestFormSubmit(form);
+        importStatus.textContent = message;
+        importStatus.classList.remove('is-hidden', 'error', 'success', 'info');
+        importStatus.classList.add(className);
     }
 
-    function detectAbsoluteFolderPath(files) {
+    function clearImportStatus() {
+        if (!importStatus) {
+            return;
+        }
+
+        importStatus.textContent = '';
+        importStatus.classList.remove('error', 'success', 'info');
+        importStatus.classList.add('is-hidden');
+    }
+
+    function pickPlaylistName(files) {
         var first = files[0];
-        if (!first) {
-            return '';
+        var folder = extractRootFolder(first);
+        if (folder !== '') {
+            return folder;
         }
 
-        var relative = '';
-        if (typeof first.webkitRelativePath === 'string' && first.webkitRelativePath !== '') {
-            relative = first.webkitRelativePath;
-        } else if (typeof first.name === 'string') {
-            relative = first.name;
+        if (first && typeof first.name === 'string' && first.name !== '') {
+            var name = first.name;
+            var separator = name.indexOf('.');
+            if (separator > 0) {
+                return name.slice(0, separator);
+            }
+            return name;
         }
 
-        if (typeof first.path === 'string' && first.path !== '') {
-            var candidate = first.path;
-            var normalizedCandidate = candidate.replace(/\\/g, '/');
-            var normalizedRelative = relative.replace(/\\/g, '/');
-
-            if (normalizedRelative !== '' && normalizedCandidate.endsWith(normalizedRelative)) {
-                var sliceLength = normalizedCandidate.length - normalizedRelative.length;
-                return candidate.slice(0, sliceLength).replace(/[\\/]+$/, '');
-            }
-
-            var lastSeparator = candidate.lastIndexOf('/');
-            if (lastSeparator === -1) {
-                lastSeparator = candidate.lastIndexOf('\\');
-            }
-
-            if (lastSeparator !== -1) {
-                return candidate.slice(0, lastSeparator).replace(/[\\/]+$/, '');
-            }
-
-            return candidate.replace(/[\\/]+$/, '');
-        }
-
-        return '';
+        return 'Uploaded Playlist';
     }
 
-    function requestFormSubmit(form) {
-        if (typeof form.requestSubmit === 'function') {
-            form.requestSubmit();
+    async function importPlaylistFolder(files) {
+        if (!Array.isArray(files) || files.length === 0) {
+            return;
+        }
+        if (isImporting) {
             return;
         }
 
-        form.submit();
+        var tsvFiles = files.filter(function (file) {
+            return /\.tsv$/i.test(file.name || '');
+        });
+
+        if (tsvFiles.length === 0) {
+            throw new Error('The selected folder does not contain any TSV files.');
+        }
+
+        isImporting = true;
+        setImportStatus('info', 'Importing playlist...');
+
+        var playlistName = pickPlaylistName(tsvFiles);
+        var payloadFiles = await Promise.all(tsvFiles.map(function (file) {
+            return file.text().then(function (content) {
+                return {
+                    name: file.webkitRelativePath || file.name,
+                    content: content
+                };
+            });
+        }));
+
+        var payload = {
+            playlist: playlistName,
+            files: payloadFiles
+        };
+
+        var response;
+        try {
+            response = await fetch('import.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify(payload)
+            });
+        } catch (networkError) {
+            isImporting = false;
+            throw new Error('Network error occurred while importing the playlist.');
+        }
+
+        var result;
+        try {
+            result = await response.json();
+        } catch (parseError) {
+            isImporting = false;
+            throw new Error('Unexpected response from the server.');
+        }
+
+        isImporting = false;
+
+        if (!response.ok || !result || result.status !== 'ok') {
+            var message = result && result.message ? result.message : 'Import failed.';
+            throw new Error(message);
+        }
+
+        setImportStatus('success', 'Playlist imported. Loading...');
+
+        var params = new URLSearchParams(window.location.search);
+        if (result.playlistId) {
+            params.set('playlist', result.playlistId);
+        }
+        if (result.playlistLabel) {
+            params.set('imported_playlist', result.playlistLabel);
+        }
+        window.location.search = params.toString();
     }
 })();
 </script>
