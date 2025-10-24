@@ -721,6 +721,8 @@ function formatSeconds(int $seconds): string
         summary.push(files.length + ' ' + fileLabel + ' found');
         previewSummary.textContent = summary.join(' • ');
         preview.classList.remove('is-hidden');
+
+        autoApplyPlaylistRoot(files);
     });
 
     function extractRootFolder(file) {
@@ -752,6 +754,76 @@ function formatSeconds(int $seconds): string
         var precision = exponent === 0 || number >= 100 ? 0 : 1;
 
         return number.toFixed(precision) + ' ' + units[exponent];
+    }
+
+    function autoApplyPlaylistRoot(files) {
+        var form = document.getElementById('playlist-root-form');
+        var input = document.getElementById('playlist_root');
+        if (!form || !input || !Array.isArray(files) || files.length === 0) {
+            return;
+        }
+
+        var detectedPath = detectAbsoluteFolderPath(files);
+        if (typeof detectedPath === 'string' && detectedPath.trim() !== '') {
+            var normalized = detectedPath.replace(/[\\/]+$/, '');
+            if (normalized !== '') {
+                input.value = normalized;
+                input.dataset.autofilled = 'true';
+            }
+        }
+
+        if (input.value.trim() === '') {
+            return;
+        }
+
+        requestFormSubmit(form);
+    }
+
+    function detectAbsoluteFolderPath(files) {
+        var first = files[0];
+        if (!first) {
+            return '';
+        }
+
+        var relative = '';
+        if (typeof first.webkitRelativePath === 'string' && first.webkitRelativePath !== '') {
+            relative = first.webkitRelativePath;
+        } else if (typeof first.name === 'string') {
+            relative = first.name;
+        }
+
+        if (typeof first.path === 'string' && first.path !== '') {
+            var candidate = first.path;
+            var normalizedCandidate = candidate.replace(/\\/g, '/');
+            var normalizedRelative = relative.replace(/\\/g, '/');
+
+            if (normalizedRelative !== '' && normalizedCandidate.endsWith(normalizedRelative)) {
+                var sliceLength = normalizedCandidate.length - normalizedRelative.length;
+                return candidate.slice(0, sliceLength).replace(/[\\/]+$/, '');
+            }
+
+            var lastSeparator = candidate.lastIndexOf('/');
+            if (lastSeparator === -1) {
+                lastSeparator = candidate.lastIndexOf('\\');
+            }
+
+            if (lastSeparator !== -1) {
+                return candidate.slice(0, lastSeparator).replace(/[\\/]+$/, '');
+            }
+
+            return candidate.replace(/[\\/]+$/, '');
+        }
+
+        return '';
+    }
+
+    function requestFormSubmit(form) {
+        if (typeof form.requestSubmit === 'function') {
+            form.requestSubmit();
+            return;
+        }
+
+        form.submit();
     }
 })();
 </script>
