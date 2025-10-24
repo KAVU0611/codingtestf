@@ -12,8 +12,27 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$playlistDirectory = dirname(__DIR__) . '/playlist';
-$repository = new PlaylistRepository($playlistDirectory);
+$playlistRootEnv = getenv('PLAYLIST_ROOT');
+if (is_string($playlistRootEnv) && trim($playlistRootEnv) !== '') {
+    $playlistRootEnv = trim($playlistRootEnv);
+    if (preg_match('/^[A-Za-z]:\\\\/', $playlistRootEnv) === 1) {
+        $drive = strtolower($playlistRootEnv[0]);
+        $remainder = str_replace('\\', '/', substr($playlistRootEnv, 2));
+        $playlistRootEnv = '/mnt/' . $drive . '/' . ltrim($remainder, '/');
+    }
+    $playlistRoot = rtrim($playlistRootEnv, "/\\");
+} else {
+    $playlistRoot = dirname(__DIR__) . '/playlist';
+}
+$playlists = discoverPlaylists($playlistRoot);
+$selectedPlaylistId = (string)($_POST['playlist'] ?? $_GET['playlist'] ?? '');
+if ($selectedPlaylistId === '' || !array_key_exists($selectedPlaylistId, $playlists)) {
+    $selectedPlaylistId = array_key_first($playlists);
+}
+$selectedPlaylist = $playlists[$selectedPlaylistId];
+$selectedPlaylistRelativePath = relativePlaylistPath($selectedPlaylist['path'], $playlistRoot);
+
+$repository = new PlaylistRepository($selectedPlaylist['path']);
 $agentClient = BedrockAgentClient::fromEnvironment();
 
 $errors = [];
@@ -34,6 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tracks = parseTrackInput($rawTracksInput);
             $repository->addAlbum($albumNameInput, $tracks);
             $query = $_GET;
+            $query['playlist'] = $selectedPlaylistId;
             $query['created'] = $albumNameInput;
             header('Location: ?' . http_build_query($query));
             exit;
@@ -62,7 +82,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_GET['created'])) {
-    $redirectMessage = 'Album "' . htmlspecialchars($_GET['created'], ENT_QUOTES, 'UTF-8') . '" was added successfully.';
+    $redirectMessage = sprintf(
+        'Album "%s" was added to "%s".',
+        htmlspecialchars((string)$_GET['created'], ENT_QUOTES, 'UTF-8'),
+        htmlspecialchars($selectedPlaylist['label'], ENT_QUOTES, 'UTF-8')
+    );
 }
 
 $filters = [
@@ -135,6 +159,77 @@ $albumNames = array_keys($albumNames);
 sort($albumNames, SORT_FLAG_CASE | SORT_STRING);
 $artistNames = array_keys($artistNames);
 sort($artistNames, SORT_FLAG_CASE | SORT_STRING);
+
+/**
+ * @return array<string,array{id:string,label:string,path:string}>
+ */
+function discoverPlaylists(string $rootDirectory): array
+{
+    if (!is_dir($rootDirectory)) {
+        @mkdir($rootDirectory, 0775, true);
+    }
+
+    $playlists = [];
+    $entries = is_dir($rootDirectory) ? scandir($rootDirectory) : [];
+    if (is_array($entries)) {
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $fullPath = $rootDirectory . DIRECTORY_SEPARATOR . $entry;
+            if (is_dir($fullPath)) {
+                $playlists[$entry] = [
+                    'id' => $entry,
+                    'label' => $entry,
+                    'path' => $fullPath,
+                ];
+            }
+        }
+    }
+
+    $rootHasAlbums = (glob($rootDirectory . DIRECTORY_SEPARATOR . '*.tsv') ?: []) !== [];
+    if ($rootHasAlbums) {
+        $label = basename($rootDirectory) ?: 'Root playlist';
+        $playlists['__root__'] = [
+            'id' => '__root__',
+            'label' => $label,
+            'path' => $rootDirectory,
+        ];
+    }
+
+    if ($playlists === []) {
+        $label = basename($rootDirectory) ?: 'Root playlist';
+        $playlists['__root__'] = [
+            'id' => '__root__',
+            'label' => $label,
+            'path' => $rootDirectory,
+        ];
+    } else {
+        uasort($playlists, static function (array $left, array $right): int {
+            return strcasecmp($left['label'], $right['label']);
+        });
+    }
+
+    return $playlists;
+}
+
+function relativePlaylistPath(string $path, string $rootDirectory): string
+{
+    $normalizedRoot = rtrim($rootDirectory, "/\\");
+    $normalizedPath = rtrim($path, "/\\");
+
+    if ($normalizedRoot !== '' && strncmp($normalizedPath, $normalizedRoot, strlen($normalizedRoot)) === 0) {
+        $relative = ltrim(substr($normalizedPath, strlen($normalizedRoot)), "/\\");
+        if ($relative === '') {
+            $fallback = basename($rootDirectory);
+            return $fallback !== '' ? $fallback : '.';
+        }
+        return $relative;
+    }
+
+    return $normalizedPath;
+}
 
 function parseTrackInput(string $input): array
 {
@@ -272,6 +367,11 @@ function formatSeconds(int $seconds): string
         .messages {
             margin-bottom: 1rem;
         }
+        .playlist-context {
+            margin: 0.3rem 0 1rem;
+            color: #475569;
+            font-size: 0.95rem;
+        }
         .message {
             padding: 0.75rem 1rem;
             border-radius: 6px;
@@ -335,6 +435,10 @@ function formatSeconds(int $seconds): string
 <main>
     <section>
         <h2>Add Album</h2>
+        <p class="playlist-context">
+            Saving to folder: <code><?= htmlspecialchars($selectedPlaylistRelativePath, ENT_QUOTES, 'UTF-8') ?></code>.
+            Use the selector below to switch playlists.
+        </p>
         <div class="messages">
             <?php foreach ($errors as $error): ?>
                 <div class="message error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
@@ -345,6 +449,7 @@ function formatSeconds(int $seconds): string
         </div>
         <form method="post">
             <input type="hidden" name="action" value="add_album">
+            <input type="hidden" name="playlist" value="<?= htmlspecialchars($selectedPlaylistId, ENT_QUOTES, 'UTF-8') ?>">
             <div>
                 <label for="album_name">Album name</label>
                 <input type="text" id="album_name" name="album_name" placeholder="e.g. Acoustic Sessions">
@@ -359,7 +464,18 @@ function formatSeconds(int $seconds): string
 
     <section>
         <h2>Playlist</h2>
+        <p class="playlist-context">Viewing folder: <code><?= htmlspecialchars($selectedPlaylistRelativePath, ENT_QUOTES, 'UTF-8') ?></code></p>
         <form method="get" class="filters">
+            <div>
+                <label for="filter_playlist">Playlist folder</label>
+                <select id="filter_playlist" name="playlist">
+                    <?php foreach ($playlists as $playlistOption): ?>
+                        <option value="<?= htmlspecialchars($playlistOption['id'], ENT_QUOTES, 'UTF-8') ?>" <?= $playlistOption['id'] === $selectedPlaylistId ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($playlistOption['label'], ENT_QUOTES, 'UTF-8') ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             <div>
                 <label for="filter_album">Album</label>
                 <input list="album-options" type="text" id="filter_album" name="filter_album" value="<?= htmlspecialchars($filters['album'], ENT_QUOTES, 'UTF-8') ?>">
@@ -457,6 +573,7 @@ function formatSeconds(int $seconds): string
         </div>
         <form method="post">
             <input type="hidden" name="action" value="ask_agent">
+            <input type="hidden" name="playlist" value="<?= htmlspecialchars($selectedPlaylistId, ENT_QUOTES, 'UTF-8') ?>">
             <div>
                 <label for="agent_prompt">Prompt</label>
                 <textarea id="agent_prompt" name="agent_prompt" placeholder="Ask for playlist insights or suggestions..."><?= htmlspecialchars($agentPromptInput, ENT_QUOTES, 'UTF-8') ?></textarea>

@@ -1,6 +1,6 @@
 # Playlist Browser (codingtest5)
 
-This repository contains a lightweight PHP web application that reads album data from TSV files located in `playlist/`, renders a searchable playlist view, and allows you to create new albums directly from the UI.
+This repository contains a lightweight PHP web application that reads album data from TSV files stored under `playlist/<playlist-folder>/`, renders a searchable playlist view, and allows you to create new albums directly from the UI.
 
 ## Getting Started
 
@@ -16,23 +16,38 @@ This repository contains a lightweight PHP web application that reads album data
    ```
    Then open http://localhost:8000 in your browser.
 
+### Pointing to an External Playlist Folder
+
+By default the app looks for playlist folders inside `playlist/` in this repository. To use another location, set `PLAYLIST_ROOT` before starting the server:
+
+```bash
+export PLAYLIST_ROOT=/mnt/c/Users/you/Downloads/codingtest/playlist
+php -S localhost:8000 -t public
+```
+
+Windows-style paths such as `C:\Users\you\Downloads\codingtest\playlist` are translated automatically when running inside WSL.
+
 ## Usage
 
-- The home screen lists every track from the `.tsv` albums under `playlist/`.
+- Pick the playlist folder you want to explore from the selector at the top of the track list.
+- The home screen lists every track from the `.tsv` albums inside the selected playlist folder.
 - Use the filters:
   - `Album` and `Artist` fields accept partial matches.
   - `Title prefix` filters tracks whose titles start with the provided string.
 - `Sort` lets you switch between the default (album + track order) and ascending duration.
-- Add a new album by entering its name and providing track rows in the format `Title<TAB>Artist<TAB>Duration` (one line per track). The application saves the album as a new TSV file inside `playlist/`.
+- Add a new album by entering its name and providing track rows in the format `Title<TAB>Artist<TAB>Duration` (one line per track). The application saves the album as a new TSV file inside the currently selected playlist folder.
 - **Ask Bedrock AgentCore**: When Amazon Bedrock AgentCore is configured, use the prompt box at the bottom of the page to ask for playlist insights. Responses and cited sources appear inline.
 
 ## Project Structure
 
 ```
-playlist/             # Album TSV files live here
-public/index.php      # Single page web UI and request handling
-src/                  # Minimal domain classes and repository
+playlist/                 # Root directory that holds playlist folders
+playlist/<playlist>/      # Folder for one playlist; contains album TSV files
+public/index.php          # Single page web UI and request handling
+src/                      # Minimal domain classes and repository
 ```
+
+Each playlist folder can house any number of albums (TSV files), and each album file contains tracks in `Title<TAB>Artist<TAB>Duration` order. The track index page aggregates all albums within the currently selected playlist.
 
 ## Amazon Bedrock AgentCore Integration
 
@@ -66,10 +81,11 @@ By default the app uses the `retrieve-and-generate` API. Session state is persis
 
 ## Sample Data
 
-Two example albums (`Acoustic Moments.tsv` and `Spectrum Dreams.tsv`) are included so the list page can be explored immediately.
+An example playlist lives under `playlist/demo/` with albums such as `Acoustic Moments.tsv` and `Spectrum Dreams.tsv` so the list page can be explored immediately after launching the server. Drop additional playlist folders next to `demo/` (e.g., copy the provided Windows `playlist` directory) and they will appear in the selector automatically.
 
 ## Requirements Checklist
 
+- ✅ Switch between playlist folders and list the tracks inside each one.
 - ✅ Add new albums through the application (creates TSV files).
 - ✅ Display a combined list of all tracks.
 - ✅ Filter by album name, artist name, or title prefix (e.g., titles starting with “A”).
