@@ -423,6 +423,12 @@ function formatSeconds(int $seconds): string
         button:hover {
             background: #1d4ed8;
         }
+        .form-actions {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
         .messages {
             margin-bottom: 0.8rem;
         }
@@ -468,6 +474,27 @@ function formatSeconds(int $seconds): string
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
         }
+        .folder-preview {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+        }
+        .folder-preview.is-hidden {
+            display: none;
+        }
+        .folder-preview ul {
+            margin: 0.75rem 0 0;
+            padding-left: 1.2rem;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+        .folder-preview li {
+            margin-bottom: 0.35rem;
+            color: #1e293b;
+            font-size: 0.95rem;
+        }
         .table-meta {
             display: flex;
             justify-content: space-between;
@@ -506,14 +533,23 @@ function formatSeconds(int $seconds): string
                 <div class="message success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div>
             <?php endforeach; ?>
         </div>
-        <form method="post">
+        <form method="post" id="playlist-root-form">
             <input type="hidden" name="action" value="set_root">
             <div>
                 <label for="playlist_root">Playlist folder path</label>
                 <input type="text" id="playlist_root" name="playlist_root" value="<?= htmlspecialchars((string)$displayedRootInput, ENT_QUOTES, 'UTF-8') ?>">
             </div>
-            <button type="submit">Use this folder</button>
+            <div class="form-actions">
+                <button type="button" id="folder-picker-button">Use this folder</button>
+                <button type="submit" id="apply-root-button">Apply path</button>
+            </div>
         </form>
+        <input type="file" id="folder-picker-input" webkitdirectory directory multiple hidden>
+        <div id="folder-preview" class="folder-preview is-hidden">
+            <h3>Folder contents</h3>
+            <p id="folder-preview-summary"></p>
+            <ul id="folder-preview-list"></ul>
+        </div>
         <p class="playlist-context">
             Currently reading from: <code><?= htmlspecialchars($playlistRoot, ENT_QUOTES, 'UTF-8') ?></code>
         </p>
@@ -633,5 +669,91 @@ function formatSeconds(int $seconds): string
         </table>
     </section>
 </main>
+<script>
+(function () {
+    var folderButton = document.getElementById('folder-picker-button');
+    var folderInput = document.getElementById('folder-picker-input');
+    var preview = document.getElementById('folder-preview');
+    var previewSummary = document.getElementById('folder-preview-summary');
+    var previewList = document.getElementById('folder-preview-list');
+
+    if (!folderButton || !folderInput || !preview || !previewSummary || !previewList) {
+        return;
+    }
+
+    folderButton.addEventListener('click', function () {
+        folderInput.value = '';
+        folderInput.click();
+    });
+
+    folderInput.addEventListener('change', function () {
+        var files = Array.prototype.slice.call(folderInput.files || []);
+        previewList.innerHTML = '';
+
+        if (files.length === 0) {
+            preview.classList.add('is-hidden');
+            previewSummary.textContent = '';
+            return;
+        }
+
+        files.sort(function (left, right) {
+            return (left.webkitRelativePath || left.name).localeCompare(right.webkitRelativePath || right.name);
+        });
+
+        var fragment = document.createDocumentFragment();
+        files.forEach(function (file) {
+            var listItem = document.createElement('li');
+            var relativePath = file.webkitRelativePath || file.name;
+            listItem.textContent = relativePath + ' (' + formatBytes(file.size) + ')';
+            fragment.appendChild(listItem);
+        });
+
+        previewList.appendChild(fragment);
+
+        var folderName = extractRootFolder(files[0]);
+        var fileLabel = files.length === 1 ? 'file' : 'files';
+        var summary = [];
+
+        if (folderName !== '') {
+            summary.push('Selected folder: ' + folderName);
+        }
+
+        summary.push(files.length + ' ' + fileLabel + ' found');
+        previewSummary.textContent = summary.join(' • ');
+        preview.classList.remove('is-hidden');
+    });
+
+    function extractRootFolder(file) {
+        if (!file) {
+            return '';
+        }
+
+        var relativePath = file.webkitRelativePath || '';
+        if (relativePath === '') {
+            return '';
+        }
+
+        var separatorIndex = relativePath.indexOf('/');
+        if (separatorIndex === -1) {
+            return relativePath;
+        }
+
+        return relativePath.slice(0, separatorIndex);
+    }
+
+    function formatBytes(bytes) {
+        if (typeof bytes !== 'number' || !isFinite(bytes) || bytes <= 0) {
+            return '0 B';
+        }
+
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        var number = bytes / Math.pow(1024, exponent);
+        var precision = exponent === 0 || number >= 100 ? 0 : 1;
+
+        return number.toFixed(precision) + ' ' + units[exponent];
+    }
+})();
+</script>
 </body>
 </html>
