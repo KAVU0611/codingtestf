@@ -18,25 +18,18 @@ This repository contains a lightweight PHP web application that reads album data
 
 ### Pointing to an External Playlist Folder
 
-By default the app looks for playlist folders inside `playlist/` in this repository. To use another location, set `PLAYLIST_ROOT` before starting the server:
-
-```bash
-export PLAYLIST_ROOT=/mnt/c/Users/you/Downloads/codingtest/playlist
-php -S localhost:8000 -t public
-```
-
-Windows-style paths such as `C:\Users\you\Downloads\codingtest\playlist` are translated automatically when running inside WSL.
+By default the app looks for playlist folders inside `playlist/` in this repository. You can either set `PLAYLIST_ROOT` before launching the server *or* paste any folder path directly into the “Playlist Folder” box on the home screen—Windows paths such as `C:\Users\you\Downloads\codingtest\playlist` are translated automatically when running inside WSL.
 
 ## Usage
 
 - Pick the playlist folder you want to explore from the selector at the top of the track list.
+- Change the root directory at any time via the “Playlist Folder” form; the app will reload the albums found in that folder (subdirectories become selectable playlists and standalone `.tsv` files are grouped under the root).
 - The home screen lists every track from the `.tsv` albums inside the selected playlist folder.
 - Use the filters:
   - `Album` and `Artist` fields accept partial matches.
   - `Title prefix` filters tracks whose titles start with the provided string.
 - `Sort` lets you switch between the default (album + track order) and ascending duration.
 - Add a new album by entering its name and providing track rows in the format `Title<TAB>Artist<TAB>Duration` (one line per track). The application saves the album as a new TSV file inside the currently selected playlist folder.
-- **Ask Bedrock AgentCore**: When Amazon Bedrock AgentCore is configured, use the prompt box at the bottom of the page to ask for playlist insights. Responses and cited sources appear inline.
 
 ## Project Structure
 
@@ -48,36 +41,6 @@ src/                      # Minimal domain classes and repository
 ```
 
 Each playlist folder can house any number of albums (TSV files), and each album file contains tracks in `Title<TAB>Artist<TAB>Duration` order. The track index page aggregates all albums within the currently selected playlist.
-
-## Amazon Bedrock AgentCore Integration
-
-The UI can route natural-language questions to an Amazon Bedrock AgentCore knowledge base via the AWS CLI. This keeps dependencies slim (no Composer packages) while enabling a hobby-friendly setup.
-
-### Prerequisites
-
-- AWS CLI v2 installed on the host that will run the PHP application.
-- An Amazon Bedrock knowledge base and an inference profile or model ARN with retrieval enabled.
-- IAM permissions that allow `bedrock-agent-runtime:RetrieveAndGenerate`.
-
-### Environment Variables
-
-Set the following before starting `php -S` (for production, place them in the web server’s environment):
-
-```bash
-export AWS_REGION=ap-northeast-1               # or your chosen region
-export BEDROCK_KNOWLEDGE_BASE_ID=kb-xxxxxxxxxx # knowledge base identifier
-export BEDROCK_MODEL_ARN=arn:aws:bedrock:...   # model or inference profile ARN
-export BEDROCK_PROFILE=codex                   # optional; falls back to AWS_PROFILE
-# export BEDROCK_AWS_CLI=/usr/local/bin/aws    # optional if aws binary lives elsewhere
-```
-
-By default the app uses the `retrieve-and-generate` API. Session state is persisted between requests via PHP sessions so follow-up questions gain context.
-
-### Troubleshooting
-
-- If the section reports that AgentCore is not configured, double-check the environment variables.
-- CLI errors (missing permissions, knowledge base misconfiguration, etc.) are surfaced in the UI.
-- For production, ensure the `aws` binary is on the PATH of the web server user (e.g., `www-data`).
 
 ## Sample Data
 
@@ -99,11 +62,5 @@ An example playlist lives under `playlist/demo/` with albums such as `Acoustic M
 
 ## Deployment Notes
 
-To keep costs low while experimenting with Amazon Bedrock AgentCore, consider:
-- Hosting the static PHP site on AWS Amplify or AWS Lightsail (cheapest option for small traffic).
-- Using a minimal EC2 or Lightsail instance with Amazon Linux + PHP, fronted by Nginx/Apache.
-- Integrating with Bedrock AgentCore via HTTPS in future iterations (not required for the current MVP).
-
-Document IAM policies, networking, and cost monitoring before going live. A detailed deployment guide can be added once infrastructure decisions are finalized.
-
-See `docs/deployment/lightsail-bedrock.md` for a step-by-step, hobby-budget deployment walkthrough that provisions a Lightsail instance, installs PHP + AWS CLI, and wires the environment variables needed for AgentCore.
+- Host the static PHP site on AWS Amplify, AWS Lightsail, or your preferred shared hosting.
+- For small experiments, the built-in `php -S` server is often enough; switch to Apache/Nginx when you need TLS or process supervision.

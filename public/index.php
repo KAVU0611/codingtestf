@@ -3,8 +3,6 @@
 declare(strict_types=1);
 
 use App\PlaylistRepository;
-use App\BedrockAgentClient;
-use App\BedrockAgentResponse;
 
 require __DIR__ . '/../src/bootstrap.php';
 
@@ -12,18 +10,63 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$playlistRootEnv = getenv('PLAYLIST_ROOT');
-if (is_string($playlistRootEnv) && trim($playlistRootEnv) !== '') {
-    $playlistRootEnv = trim($playlistRootEnv);
-    if (preg_match('/^[A-Za-z]:\\\\/', $playlistRootEnv) === 1) {
-        $drive = strtolower($playlistRootEnv[0]);
-        $remainder = str_replace('\\', '/', substr($playlistRootEnv, 2));
-        $playlistRootEnv = '/mnt/' . $drive . '/' . ltrim($remainder, '/');
+$defaultPlaylistRoot = dirname(__DIR__) . '/playlist';
+$playlistRoot = $defaultPlaylistRoot;
+$folderErrors = [];
+$folderSuccess = [];
+$albumErrors = [];
+$albumSuccess = [];
+
+$playlistRootEnvRaw = getenv('PLAYLIST_ROOT');
+if (is_string($playlistRootEnvRaw) && trim($playlistRootEnvRaw) !== '') {
+    $envNormalized = normalizeDirectoryPath($playlistRootEnvRaw);
+    if ($envNormalized !== '' && is_dir($envNormalized)) {
+        $playlistRoot = $envNormalized;
     }
-    $playlistRoot = rtrim($playlistRootEnv, "/\\");
-} else {
-    $playlistRoot = dirname(__DIR__) . '/playlist';
 }
+
+if (isset($_SESSION['playlist_root']) && is_string($_SESSION['playlist_root'])) {
+    $sessionNormalized = normalizeDirectoryPath((string)$_SESSION['playlist_root']);
+    if ($sessionNormalized !== '' && is_dir($sessionNormalized)) {
+        $playlistRoot = $sessionNormalized;
+    }
+}
+
+$folderInputValue = $_SESSION['playlist_root_raw'] ?? '';
+if ($folderInputValue === '') {
+    if (is_string($playlistRootEnvRaw) && trim($playlistRootEnvRaw) !== '') {
+        $folderInputValue = trim($playlistRootEnvRaw);
+    } else {
+        $folderInputValue = $playlistRoot;
+    }
+}
+
+$postAction = $_SERVER['REQUEST_METHOD'] === 'POST' ? (string)($_POST['action'] ?? '') : '';
+
+if ($postAction === 'set_root') {
+    $inputPath = trim((string)($_POST['playlist_root'] ?? ''));
+    if ($inputPath === '') {
+        $folderErrors[] = 'Playlist folder path is required.';
+    } else {
+        $normalizedPath = normalizeDirectoryPath($inputPath);
+        if ($normalizedPath === '') {
+            $folderErrors[] = 'Playlist folder path is invalid.';
+        } elseif (!is_dir($normalizedPath)) {
+            $folderErrors[] = 'The specified playlist folder does not exist.';
+        } else {
+            $_SESSION['playlist_root'] = $normalizedPath;
+            $_SESSION['playlist_root_raw'] = $inputPath;
+            $playlistRoot = $normalizedPath;
+            $folderInputValue = $inputPath;
+            $folderSuccess[] = sprintf('Playlist folder changed to "%s".', $normalizedPath);
+        }
+
+        if ($inputPath !== '') {
+            $folderInputValue = $inputPath;
+        }
+    }
+}
+
 $playlists = discoverPlaylists($playlistRoot);
 $selectedPlaylistId = (string)($_POST['playlist'] ?? $_GET['playlist'] ?? '');
 if ($selectedPlaylistId === '' || !array_key_exists($selectedPlaylistId, $playlists)) {
@@ -33,59 +76,29 @@ $selectedPlaylist = $playlists[$selectedPlaylistId];
 $selectedPlaylistRelativePath = relativePlaylistPath($selectedPlaylist['path'], $playlistRoot);
 
 $repository = new PlaylistRepository($selectedPlaylist['path']);
-$agentClient = BedrockAgentClient::fromEnvironment();
 
-$errors = [];
-$redirectMessage = null;
-$agentPromptInput = '';
-/** @var BedrockAgentResponse|null $agentResponse */
-$agentResponse = null;
-$agentError = null;
+if ($postAction === 'add_album') {
+    $albumNameInput = $_POST['album_name'] ?? '';
+    $rawTracksInput = $_POST['tracks'] ?? '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = (string)($_POST['action'] ?? 'add_album');
-
-    if ($action === 'add_album') {
-        $albumNameInput = $_POST['album_name'] ?? '';
-        $rawTracksInput = $_POST['tracks'] ?? '';
-
-        try {
-            $tracks = parseTrackInput($rawTracksInput);
-            $repository->addAlbum($albumNameInput, $tracks);
-            $query = $_GET;
-            $query['playlist'] = $selectedPlaylistId;
-            $query['created'] = $albumNameInput;
-            header('Location: ?' . http_build_query($query));
-            exit;
-        } catch (Throwable $exception) {
-            $errors[] = $exception->getMessage();
-        }
-    } elseif ($action === 'ask_agent') {
-        $agentPromptInput = trim((string)($_POST['agent_prompt'] ?? ''));
-
-        if ($agentPromptInput === '') {
-            $agentError = 'Prompt cannot be empty.';
-        } elseif ($agentClient === null) {
-            $agentError = 'Amazon Bedrock AgentCore is not configured on this server.';
-        } else {
-            try {
-                $sessionId = isset($_SESSION['bedrock_session_id']) ? (string)$_SESSION['bedrock_session_id'] : null;
-                $agentResponse = $agentClient->ask($agentPromptInput, $sessionId !== '' ? $sessionId : null);
-                if ($agentResponse->getSessionId() !== '') {
-                    $_SESSION['bedrock_session_id'] = $agentResponse->getSessionId();
-                }
-            } catch (Throwable $exception) {
-                $agentError = $exception->getMessage();
-            }
-        }
+    try {
+        $tracks = parseTrackInput($rawTracksInput);
+        $repository->addAlbum($albumNameInput, $tracks);
+        $query = $_GET;
+        $query['playlist'] = $selectedPlaylistId;
+        $query['created'] = $albumNameInput;
+        header('Location: ?' . http_build_query($query));
+        exit;
+    } catch (Throwable $exception) {
+        $albumErrors[] = $exception->getMessage();
     }
 }
 
 if (isset($_GET['created'])) {
-    $redirectMessage = sprintf(
+    $albumSuccess[] = sprintf(
         'Album "%s" was added to "%s".',
-        htmlspecialchars((string)$_GET['created'], ENT_QUOTES, 'UTF-8'),
-        htmlspecialchars($selectedPlaylist['label'], ENT_QUOTES, 'UTF-8')
+        (string)$_GET['created'],
+        $selectedPlaylist['label']
     );
 }
 
@@ -159,6 +172,43 @@ $albumNames = array_keys($albumNames);
 sort($albumNames, SORT_FLAG_CASE | SORT_STRING);
 $artistNames = array_keys($artistNames);
 sort($artistNames, SORT_FLAG_CASE | SORT_STRING);
+
+function normalizeDirectoryPath(string $path): string
+{
+    $path = trim($path);
+    if ($path === '') {
+        return '';
+    }
+
+    if ($path[0] === '~') {
+        $home = getenv('HOME');
+        if (is_string($home) && $home !== '') {
+            $path = $home . substr($path, 1);
+        }
+    }
+
+    if (preg_match('/^[A-Za-z]:\\\\/', $path) === 1) {
+        $drive = strtolower($path[0]);
+        $remainder = str_replace('\\', '/', substr($path, 2));
+        $path = '/mnt/' . $drive . '/' . ltrim($remainder, '/');
+    } else {
+        $path = str_replace('\\', '/', $path);
+    }
+
+    $normalized = rtrim($path, "/\\");
+    if ($normalized === '') {
+        return '';
+    }
+
+    if (is_dir($normalized)) {
+        $real = realpath($normalized);
+        if ($real !== false) {
+            $normalized = rtrim($real, "/\\");
+        }
+    }
+
+    return $normalized;
+}
 
 /**
  * @return array<string,array{id:string,label:string,path:string}>
@@ -430,9 +480,36 @@ function formatSeconds(int $seconds): string
 <body>
 <header>
     <h1>Playlist Viewer</h1>
-    <p>Browse and manage albums stored as TSV files.</p>
+    <p>Select a playlist folder and browse or add albums stored as TSV files.</p>
 </header>
 <main>
+    <section>
+        <h2>Playlist Folder</h2>
+        <p class="playlist-context">
+            Enter the directory that contains your playlist folders or TSV albums.
+            Windows paths are converted automatically.
+        </p>
+        <div class="messages">
+            <?php foreach ($folderErrors as $error): ?>
+                <div class="message error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
+            <?php endforeach; ?>
+            <?php foreach ($folderSuccess as $message): ?>
+                <div class="message success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div>
+            <?php endforeach; ?>
+        </div>
+        <form method="post">
+            <input type="hidden" name="action" value="set_root">
+            <div>
+                <label for="playlist_root">Playlist folder path</label>
+                <input type="text" id="playlist_root" name="playlist_root" value="<?= htmlspecialchars($folderInputValue, ENT_QUOTES, 'UTF-8') ?>">
+            </div>
+            <button type="submit">Use this folder</button>
+        </form>
+        <p class="playlist-context">
+            Currently reading from: <code><?= htmlspecialchars($playlistRoot, ENT_QUOTES, 'UTF-8') ?></code>
+        </p>
+    </section>
+
     <section>
         <h2>Add Album</h2>
         <p class="playlist-context">
@@ -440,12 +517,12 @@ function formatSeconds(int $seconds): string
             Use the selector below to switch playlists.
         </p>
         <div class="messages">
-            <?php foreach ($errors as $error): ?>
+            <?php foreach ($albumErrors as $error): ?>
                 <div class="message error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
             <?php endforeach; ?>
-            <?php if ($redirectMessage): ?>
-                <div class="message success"><?= $redirectMessage ?></div>
-            <?php endif; ?>
+            <?php foreach ($albumSuccess as $message): ?>
+                <div class="message success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div>
+            <?php endforeach; ?>
         </div>
         <form method="post">
             <input type="hidden" name="action" value="add_album">
@@ -544,42 +621,6 @@ function formatSeconds(int $seconds): string
             <?php endif; ?>
             </tbody>
         </table>
-    </section>
-
-    <section>
-        <h2>Ask Amazon Bedrock AgentCore</h2>
-        <p>Send a natural-language question to your configured Bedrock agent to get playlist insights, recommendations, or context-aware summaries.</p>
-        <div class="messages">
-            <?php if ($agentError): ?>
-                <div class="message error"><?= htmlspecialchars($agentError, ENT_QUOTES, 'UTF-8') ?></div>
-            <?php endif; ?>
-            <?php if ($agentResponse): ?>
-                <div class="message success">
-                    <?= nl2br(htmlspecialchars($agentResponse->getText(), ENT_QUOTES, 'UTF-8')) ?>
-                </div>
-                <?php if ($agentResponse->getCitations()): ?>
-                    <div class="message">
-                        <strong>Sources:</strong>
-                        <ul>
-                            <?php foreach ($agentResponse->getCitations() as $citation): ?>
-                                <li><?= htmlspecialchars($citation, ENT_QUOTES, 'UTF-8') ?></li>
-                            <?php endforeach; ?>
-                        </ul>
-                    </div>
-                <?php endif; ?>
-            <?php elseif (!$agentClient): ?>
-                <div class="message">Set <code>BEDROCK_KNOWLEDGE_BASE_ID</code> and related variables to enable this feature.</div>
-            <?php endif; ?>
-        </div>
-        <form method="post">
-            <input type="hidden" name="action" value="ask_agent">
-            <input type="hidden" name="playlist" value="<?= htmlspecialchars($selectedPlaylistId, ENT_QUOTES, 'UTF-8') ?>">
-            <div>
-                <label for="agent_prompt">Prompt</label>
-                <textarea id="agent_prompt" name="agent_prompt" placeholder="Ask for playlist insights or suggestions..."><?= htmlspecialchars($agentPromptInput, ENT_QUOTES, 'UTF-8') ?></textarea>
-            </div>
-            <button type="submit">Send to Bedrock</button>
-        </form>
     </section>
 </main>
 </body>
