@@ -3,28 +3,61 @@
 declare(strict_types=1);
 
 use App\PlaylistRepository;
+use App\BedrockAgentClient;
+use App\BedrockAgentResponse;
 
 require __DIR__ . '/../src/bootstrap.php';
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 $playlistDirectory = dirname(__DIR__) . '/playlist';
 $repository = new PlaylistRepository($playlistDirectory);
+$agentClient = BedrockAgentClient::fromEnvironment();
 
 $errors = [];
 $redirectMessage = null;
+$agentPromptInput = '';
+/** @var BedrockAgentResponse|null $agentResponse */
+$agentResponse = null;
+$agentError = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $albumNameInput = $_POST['album_name'] ?? '';
-    $rawTracksInput = $_POST['tracks'] ?? '';
+    $action = (string)($_POST['action'] ?? 'add_album');
 
-    try {
-        $tracks = parseTrackInput($rawTracksInput);
-        $repository->addAlbum($albumNameInput, $tracks);
-        $query = $_GET;
-        $query['created'] = $albumNameInput;
-        header('Location: ?' . http_build_query($query));
-        exit;
-    } catch (Throwable $exception) {
-        $errors[] = $exception->getMessage();
+    if ($action === 'add_album') {
+        $albumNameInput = $_POST['album_name'] ?? '';
+        $rawTracksInput = $_POST['tracks'] ?? '';
+
+        try {
+            $tracks = parseTrackInput($rawTracksInput);
+            $repository->addAlbum($albumNameInput, $tracks);
+            $query = $_GET;
+            $query['created'] = $albumNameInput;
+            header('Location: ?' . http_build_query($query));
+            exit;
+        } catch (Throwable $exception) {
+            $errors[] = $exception->getMessage();
+        }
+    } elseif ($action === 'ask_agent') {
+        $agentPromptInput = trim((string)($_POST['agent_prompt'] ?? ''));
+
+        if ($agentPromptInput === '') {
+            $agentError = 'Prompt cannot be empty.';
+        } elseif ($agentClient === null) {
+            $agentError = 'Amazon Bedrock AgentCore is not configured on this server.';
+        } else {
+            try {
+                $sessionId = isset($_SESSION['bedrock_session_id']) ? (string)$_SESSION['bedrock_session_id'] : null;
+                $agentResponse = $agentClient->ask($agentPromptInput, $sessionId !== '' ? $sessionId : null);
+                if ($agentResponse->getSessionId() !== '') {
+                    $_SESSION['bedrock_session_id'] = $agentResponse->getSessionId();
+                }
+            } catch (Throwable $exception) {
+                $agentError = $exception->getMessage();
+            }
+        }
     }
 }
 
@@ -311,6 +344,7 @@ function formatSeconds(int $seconds): string
             <?php endif; ?>
         </div>
         <form method="post">
+            <input type="hidden" name="action" value="add_album">
             <div>
                 <label for="album_name">Album name</label>
                 <input type="text" id="album_name" name="album_name" placeholder="e.g. Acoustic Sessions">
@@ -394,6 +428,41 @@ function formatSeconds(int $seconds): string
             <?php endif; ?>
             </tbody>
         </table>
+    </section>
+
+    <section>
+        <h2>Ask Amazon Bedrock AgentCore</h2>
+        <p>Send a natural-language question to your configured Bedrock agent to get playlist insights, recommendations, or context-aware summaries.</p>
+        <div class="messages">
+            <?php if ($agentError): ?>
+                <div class="message error"><?= htmlspecialchars($agentError, ENT_QUOTES, 'UTF-8') ?></div>
+            <?php endif; ?>
+            <?php if ($agentResponse): ?>
+                <div class="message success">
+                    <?= nl2br(htmlspecialchars($agentResponse->getText(), ENT_QUOTES, 'UTF-8')) ?>
+                </div>
+                <?php if ($agentResponse->getCitations()): ?>
+                    <div class="message">
+                        <strong>Sources:</strong>
+                        <ul>
+                            <?php foreach ($agentResponse->getCitations() as $citation): ?>
+                                <li><?= htmlspecialchars($citation, ENT_QUOTES, 'UTF-8') ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                <?php endif; ?>
+            <?php elseif (!$agentClient): ?>
+                <div class="message">Set <code>BEDROCK_KNOWLEDGE_BASE_ID</code> and related variables to enable this feature.</div>
+            <?php endif; ?>
+        </div>
+        <form method="post">
+            <input type="hidden" name="action" value="ask_agent">
+            <div>
+                <label for="agent_prompt">Prompt</label>
+                <textarea id="agent_prompt" name="agent_prompt" placeholder="Ask for playlist insights or suggestions..."><?= htmlspecialchars($agentPromptInput, ENT_QUOTES, 'UTF-8') ?></textarea>
+            </div>
+            <button type="submit">Send to Bedrock</button>
+        </form>
     </section>
 </main>
 </body>

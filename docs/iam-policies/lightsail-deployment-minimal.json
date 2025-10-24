@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LightsailProvisioning",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateInstances",
+        "lightsail:DeleteInstance",
+        "lightsail:GetInstance",
+        "lightsail:GetInstanceAccessDetails",
+        "lightsail:GetInstancePortStates",
+        "lightsail:GetInstances",
+        "lightsail:GetInstanceState",
+        "lightsail:OpenInstancePublicPorts",
+        "lightsail:CloseInstancePublicPorts",
+        "lightsail:EnableAddOn",
+        "lightsail:DisableAddOn"
+      ],
+      "Resource": "arn:aws:lightsail:ap-northeast-1:123456789012:Instance/playlist-bedrock"
+    },
+    {
+      "Sid": "LightsailSnapshots",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateInstanceSnapshot",
+        "lightsail:GetInstanceSnapshot",
+        "lightsail:GetInstanceSnapshots"
+      ],
+      "Resource": "arn:aws:lightsail:ap-northeast-1:123456789012:InstanceSnapshot/playlist-bedrock*"
+    }
+  ]
+}
