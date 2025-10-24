@@ -1,0 +1,21 @@
+# Environment artifacts created inside the GitHub Codespace / development container
+.aws/
+.cache/
+.codex/
+.npm/
+.nvm/
+snap/
+.bash_history
+.bashrc
+.lesshst
+.motd_shown
+.profile
+
+# PHP runtime artifacts
+vendor/
+*.log
+.phpunit.result.cache
+
+# System files
+.DS_Store
+Thumbs.db
