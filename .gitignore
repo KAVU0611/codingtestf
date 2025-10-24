@@ -1,27 +1,16 @@
-# Environment artifacts created inside the GitHub Codespace / development container
-.aws/
-.cache/
-.codex/
-.npm/
-.nvm/
-snap/
-.bash_history
-.bashrc
-.lesshst
-.motd_shown
-.profile
-
 # PHP runtime artifacts
-vendor/
-*.log
-.phpunit.result.cache
+/.phpunit.result.cache
+/.php_cs.cache
 
-# System files
+# Local environment files
+/.env
+.env.local
+
+# OS/editor folders
 .DS_Store
 Thumbs.db
+/.idea
+/.vscode
 
-# Local environment secrets
-.env
-.env.local
-/.ssh/
-*.pem
+# Composer vendor directory (not used now, but ignore for future)
+/vendor/
